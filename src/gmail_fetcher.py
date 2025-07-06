@@ -1,21 +1,22 @@
 import os
-import base64
-from email.mime.text import MIMEText
 from typing import List, Dict
 
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
-def get_service() -> 'googleapiclient.discovery.Resource':
-    creds_path = os.environ.get("GOOGLE_CREDENTIALS")
-    if not creds_path:
-        raise RuntimeError("GOOGLE_CREDENTIALS env var not set")
-    creds = service_account.Credentials.from_service_account_file(
-        creds_path, scopes=SCOPES
+def get_service(token: Dict[str, str]) -> "googleapiclient.discovery.Resource":
+    """Create Gmail API service using OAuth token dict."""
+    creds = Credentials(
+        token=token.get("access_token"),
+        refresh_token=token.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+        scopes=SCOPES,
     )
     service = build("gmail", "v1", credentials=creds)
     return service

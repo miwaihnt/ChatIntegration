@@ -1,12 +1,12 @@
 import os
 import base64
-import time
 from typing import Dict
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from gmail_fetcher import get_service, fetch_unread_messages, mark_as_read
+from gmail_fetcher import SCOPES, get_service, fetch_unread_messages, mark_as_read
+from google_auth_oauthlib.flow import Flow
 from notion_client_wrapper import get_client, create_message_page
 from summarizer import summarize_and_classify
 
@@ -14,9 +14,10 @@ load_dotenv()
 
 CHECK_INTERVAL = 60  # seconds
 
-def process_messages():
+def process_messages(token: Dict[str, str]):
+    """Fetch unread Gmail messages and push them to Notion."""
     st.write("Checking Gmail for new messages...")
-    service = get_service()
+    service = get_service(token)
     notion = get_client()
     database_id = os.environ.get("NOTION_DATABASE_ID")
     if not database_id:
@@ -45,24 +46,74 @@ def process_messages():
 def main():
     st.title("Customer Support Archive Bot")
 
-    # Allow user to upload Gmail API credentials
-    uploaded = st.file_uploader("Upload Gmail credentials JSON", type="json")
-    if uploaded is not None:
-        # Save uploaded credentials temporarily
-        cred_path = "temp_credential.json"
-        with open(cred_path, "wb") as f:
-            f.write(uploaded.getbuffer())
-        os.environ["GOOGLE_CREDENTIALS"] = os.path.abspath(cred_path)
-        st.success("Credentials uploaded")
-    else:
-        st.warning("Please upload Gmail credential JSON")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8501")
+    token = st.session_state.get("token")
 
-    # Button to process messages, disabled when creds missing
-    if st.button("Check now", disabled=uploaded is None):
-        if uploaded is None:
-            st.error("Upload credentials first")
-        else:
-            process_messages()
+    params = st.experimental_get_query_params()
+    if not token and "code" in params:
+        # User returned from OAuth consent screen
+        try:
+            flow = Flow.from_client_config(
+                {
+                    "web": {
+                        "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+                        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "redirect_uris": [redirect_uri],
+                    }
+                },
+                scopes=SCOPES,
+                state=st.session_state.get("oauth_state"),
+            )
+            flow.redirect_uri = redirect_uri
+            flow.fetch_token(code=params["code"][0])
+            creds = flow.credentials
+            st.session_state["token"] = {
+                "access_token": creds.token,
+                "refresh_token": creds.refresh_token,
+                "token_uri": creds.token_uri,
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "scopes": creds.scopes,
+            }
+            st.experimental_set_query_params()  # clear params
+            token = st.session_state["token"]
+            st.success("Authenticated with Google")
+        except Exception as e:
+            st.error(f"Authentication failed: {e}")
+
+    if not token:
+        if st.button("Googleでログイン"):
+            flow = Flow.from_client_config(
+                {
+                    "web": {
+                        "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+                        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "redirect_uris": [redirect_uri],
+                    }
+                },
+                scopes=SCOPES,
+            )
+            flow.redirect_uri = redirect_uri
+            auth_url, state = flow.authorization_url(
+                access_type="offline",
+                include_granted_scopes="true",
+                prompt="consent",
+            )
+            st.session_state["oauth_state"] = state
+            st.markdown(
+                f'<meta http-equiv="refresh" content="0; url={auth_url}">',
+                unsafe_allow_html=True,
+            )
+            st.stop()
+        st.stop()
+
+    # Button to process messages when authenticated
+    if st.button("Check now"):
+        process_messages(token)
 
 if __name__ == "__main__":
     main()
