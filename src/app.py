@@ -44,13 +44,25 @@ def process_messages():
 
 def main():
     st.title("Customer Support Archive Bot")
-    if st.button("Check now"):
-        process_messages()
 
-    st.write("Running periodic checks every minute...")
-    while True:
-        process_messages()
-        time.sleep(CHECK_INTERVAL)
+    # Allow user to upload Gmail API credentials
+    uploaded = st.file_uploader("Upload Gmail credentials JSON", type="json")
+    if uploaded is not None:
+        # Save uploaded credentials temporarily
+        cred_path = "temp_credential.json"
+        with open(cred_path, "wb") as f:
+            f.write(uploaded.getbuffer())
+        os.environ["GOOGLE_CREDENTIALS"] = os.path.abspath(cred_path)
+        st.success("Credentials uploaded")
+    else:
+        st.warning("Please upload Gmail credential JSON")
+
+    # Button to process messages, disabled when creds missing
+    if st.button("Check now", disabled=uploaded is None):
+        if uploaded is None:
+            st.error("Upload credentials first")
+        else:
+            process_messages()
 
 if __name__ == "__main__":
     main()
